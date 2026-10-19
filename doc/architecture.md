@@ -547,21 +547,25 @@ Dual-investor repayment uses a **separate Trustless Work multi-release escrow** 
 
 Let:
 
-- `P` = locked supplier invoice principal.
-- `Cᵢ` = confirmed principal contributed by investor `i`.
+- `P` = locked supplier invoice principal in configured USDC SAC token units.
+- `Cᵢ` = confirmed principal contributed by investor `i`, in the same units.
 - `Sᵢ = Cᵢ / P` = investor `i`'s ownership share.
-- `R` = total deal profit computed from the locked deal terms by `computeInvestorReturns`.
-- `F = 1.3%` = current combined repayment release deduction: Mercato 1% + Trustless Work 0.3%.
+- `R` = asset-level flat-term return in token units, calculated once from the locked rate; it is not annualized.
+- `F` = versioned repayment release fee policy, kept separate from funding-phase fees.
 
 For each investor:
 
 ```text
-profit_i        = roundUSDC(R * S_i)
+R               = floor(P * flat_rate_bps / 10,000)
+profit_i        = largest-remainder allocation of R by C_i; ties by position ID
 net_payout_i    = C_i + profit_i
-gross_milestone_i = roundUSDC(net_payout_i / (1 - F))
 ```
 
-The final investor's profit and gross milestone absorb any 7-decimal USDC rounding remainder so that all investor profits equal `R`, all contributed principals equal `P`, and all gross milestones equal the stored repayment target. Allocation inputs and computed outputs must be snapshotted when the order becomes fully funded; later profile or deal changes cannot alter entitlements.
+Amounts are parsed and calculated as checked integers; token decimals are supplied from the configured SAC, and API boundaries serialize units as strings. `lib/rwa/amounts.ts` provides this exact conversion boundary. `lib/rwa/repayment-allocation.ts` derives entitlements only from confirmed positions and immutable flat-rate terms. The total return is rounded down once to token units, then distributed exactly with largest remainder and a stable position-ID tie break; principal is never rounded or redistributed.
+
+For partial repayments, cumulative investor targets use a house-monotone highest-averages allocation weighted by final entitlements. Each new target is bounded by the final entitlement and confirmed prior settlements are subtracted, so a larger cumulative distribution cannot reduce any position's target. The allocation models each installment as proportional service of final principal-plus-return entitlements; it does not separately prioritize principal or return. Pending, cancelled, refunded, and duplicate positions are rejected. An excess cumulative repayment is rejected rather than allocated beyond obligations; its caller must use a separately authorized refund or reconciliation path.
+
+Release gross-up and the platform/protocol fee deductions are reported separately from net entitlements and funding fees. The pure fee calculation requires a versioned policy and records any unit-level reconciliation residual. It is a model only: do not enable a payout path until the deployed Trustless Work version's actual fee deductions and rounding have been verified. Allocation inputs and outputs must be snapshotted when the order becomes fully funded; later profile or deal changes cannot alter entitlements.
 
 Example for a `10,000 USDC` order with `1,000 USDC` total profit:
 
